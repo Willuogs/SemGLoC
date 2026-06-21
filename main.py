@@ -38,8 +38,8 @@ from KLLoss import KLLoss
 import resource
 from visualize import record_skeleton, wrong_analyze
 
-classes, num_text_aug, text_dict = text_prompt_openai_pasta_pool_4part_ucla()
-text_list = text_prompt_openai_random_ucla()
+classes, num_text_aug, text_dict = text_prompt_openai_pasta_pool_4part(use_paraphrase=True,prob_t5 = 0.2)
+text_list = text_prompt_openai_random(use_swap=True, use_paraphrase=True,prob_swap=0.3, prob_t5=0.2)
 
 
 
@@ -261,37 +261,38 @@ def triplet_loss(class_text_features, margin=0.3):
     loss = 0.0
     num_triplets = 0
 
-
+   
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     for label, feats in class_text_features.items():
-
+        
         feats = torch.stack(feats).to(device)  # [N, D]
         if len(feats) < 2:
             continue
 
 
         anchor_idx = torch.randint(0, len(feats), (1,))
-        positive_idx = (anchor_idx + 1) % len(feats) 
+        positive_idx = (anchor_idx + 1) % len(feats)  
         anchor = feats[anchor_idx]
         positive = feats[positive_idx]
 
+
         anchor = anchor.to(device)
         positive = positive.to(device)
+
 
         negative_distances = []
         for other_label in class_text_features:
             if other_label == label:
                 continue
-            other_feats = torch.stack(class_text_features[other_label]).to(device) 
-            dist = F.pairwise_distance(anchor, other_feats, p=2) 
-            negative_distances.append(dist.min())  
+            other_feats = torch.stack(class_text_features[other_label]).to(device)  # **确保 other_feats 也在 device**
+            dist = F.pairwise_distance(anchor, other_feats, p=2)  
+            negative_distances.append(dist.min()) 
 
         if not negative_distances: 
             continue
 
-        negative = torch.stack(negative_distances).min(dim=0)[0].view(1, -1).to(device)  #
-
+        negative = torch.stack(negative_distances).min(dim=0)[0].view(1, -1).to(device)  # **确保 negative 也在 device**
 
         pos_dist = F.pairwise_distance(anchor, positive)
         neg_dist = F.pairwise_distance(anchor, negative)
@@ -304,9 +305,8 @@ def class_contrastive_loss(class_text_features, temperature=0.07):
     all_features = []
     all_labels = []
 
-
     for label, features in class_text_features.items():
-        
+
         features_np = np.array(features)  
 
 
@@ -332,6 +332,7 @@ def class_contrastive_loss(class_text_features, temperature=0.07):
 
 
     pos_sim = torch.sum(mask * similarity_matrix, dim=1) / (mask.sum(dim=1) + 1e-8)
+
 
     neg_sim = torch.sum((1 - mask) * similarity_matrix, dim=1) / ((1 - mask).sum(dim=1) + 1e-8)
 
@@ -612,12 +613,11 @@ class Processor():
                     loss_te_list.append((loss_imgs + loss_texts) / 2)
 
                 loss_ce = self.loss_ce(output, label)
-
-                loss_text_constraint = triplet_loss(class_text_features, margin=0.3)  
+                loss_text_constraint = triplet_loss(class_text_features, margin=0.3)
 
                 if self.arg.cl_mode is not None:
                     self.train_writer.add_scalar('cl_loss', cl_loss.mean().data.item(), self.global_step)
-                   
+               
                     loss = loss_ce + self.arg.loss_alpha * sum(loss_te_list) / len(loss_te_list) + 0.2 * loss_text_constraint + 0.3 * cl_loss.mean()  
                     
 
